@@ -1092,6 +1092,181 @@ async function closePollAction(pollId) { if (!confirm('Close this poll? No more 
 async function loadResolutionsList() { const el = document.getElementById('resolutionsList'); if (!el) return; try { const statusFilter = document.getElementById('resStatusFilter')?.value || ''; const params = statusFilter ? {status: statusFilter} : {}; const data = await SunData.getResolutions(params); if (!data || data.length === 0) { el.innerHTML = '<div class="kpi-empty">No resolutions recorded yet</div>'; return; } const statusColors = {Passed: '#2e7d32', Rejected: '#c62828', Deferred: '#f57c00', Implemented: '#1565c0'}; el.innerHTML = '<div class="card"><div style="overflow-x:auto"><table><tr><th>Res #</th><th>Title</th><th>Proposed By</th><th>Votes</th><th>Status</th><th>Date</th></tr>' + data.map(r => { const color = statusColors[r.status] || '#666'; return `<tr><td><strong>${esc(r.resolution_no || '—')}</strong></td><td>${esc(r.title)}</td><td>${esc(r.proposed_by || '—')}</td><td style="white-space:nowrap"><span style="color:#2e7d32;font-weight:600">${r.votes_for || 0}</span> / <span style="color:#c62828;font-weight:600">${r.votes_against || 0}</span></td><td><span class="badge" style="background:${color}">${r.status}</span></td><td>${new Date(r.created_at).toLocaleDateString('en-IN')}</td></tr>`; }).join('') + '</table></div></div>'; } catch(e) { el.innerHTML = '<div class="kpi-empty">Error loading resolutions</div>'; } }
 async function saveResolution() { const title = document.getElementById('resTitle').value.trim(); if (!title) { showToast('Enter a title', 'error'); return; } const data = { resolution_no: document.getElementById('resNo').value.trim() || null, title, description: document.getElementById('resDesc').value, proposed_by: document.getElementById('resProposed').value, seconded_by: document.getElementById('resSeconded').value, votes_for: Number(document.getElementById('resVotesFor').value) || 0, votes_against: Number(document.getElementById('resVotesAgainst').value) || 0, status: document.getElementById('resStatus').value, implementation_date: document.getElementById('resImplDate').value || null }; const res = await SunData.createResolution(data); if (res.error) { showToast('Error: ' + res.error.message, 'error'); return; } var s = document.getElementById('resSuccess'); s.textContent = 'Resolution saved!'; s.style.display = 'block'; setTimeout(() => s.style.display = 'none', 3000); document.getElementById('resolutionForm').style.display = 'none'; loadResolutionsList(); }
 
+// ===== GOOGLE DRIVE INTEGRATION =====
+const GDRIVE_CLIENT_ID = '374776619891-gb9cq8casu0hrt5jt62mgfl0rqgfseul.apps.googleusercontent.com';
+const GDRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_FOLDER_NAME = 'BOM Uploaded Documents';
+let _gdriveToken = null;
+let _gdriveFolderId = null;
+let _selectedDocFile = null;
+
+function handleDocFileSelect(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { showToast('File too large (max 10MB)', 'error'); input.value = ''; return; }
+  _selectedDocFile = file;
+  const label = document.getElementById('docFileLabel');
+  const icon = file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : '📎';
+  label.innerHTML = `<div style="font-size:2rem;margin-bottom:6px">${icon}</div><div style="font-weight:600;color:var(--text)">${file.name}</div><div style="font-size:0.75rem;color:var(--text-light);margin-top:2px">${(file.size / 1024).toFixed(1)} KB — Click to change</div>`;
+  document.getElementById('docFileArea').style.borderColor = 'var(--primary)';
+  // Auto-fill title if empty
+  const titleInput = document.getElementById('docTitle');
+  if (!titleInput.value.trim()) { titleInput.value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '); }
+}
+
+function gdriveAuth() {
+  return new Promise((resolve, reject) => {
+    if (_gdriveToken) { resolve(_gdriveToken); return; }
+    try {
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: GDRIVE_CLIENT_ID,
+        scope: GDRIVE_SCOPES,
+        callback: (resp) => {
+          if (resp.error) { reject(resp.error); return; }
+          _gdriveToken = resp.access_token;
+          resolve(_gdriveToken);
+        }
+      });
+      client.requestAccessToken();
+    } catch (e) { reject(e); }
+  });
+}
+
+async function gdriveGetOrCreateFolder(token) {
+  if (_gdriveFolderId) return _gdriveFolderId;
+  // Search for existing folder
+  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='${GDRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`;
+  const searchResp = await fetch(searchUrl, { headers: { 'Authorization': 'Bearer ' + token } });
+  const searchData = await searchResp.json();
+  if (searchData.files && searchData.files.length > 0) {
+    _gdriveFolderId = searchData.files[0].id;
+    return _gdriveFolderId;
+  }
+  // Create folder
+  const createResp = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: GDRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+  });
+  const createData = await createResp.json();
+  _gdriveFolderId = createData.id;
+  return _gdriveFolderId;
+}
+
+async function gdriveUploadFile(token, file, folderId) {
+  const metadata = { name: file.name, parents: [folderId] };
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  form.append('file', file);
+  const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,webContentLink', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token },
+    body: form
+  });
+  if (!resp.ok) { const err = await resp.text(); throw new Error('Upload failed: ' + err); }
+  return await resp.json();
+}
+
+async function gdriveSetPublicRead(token, fileId) {
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'reader', type: 'anyone' })
+  });
+}
+
+async function saveDocumentWithDrive() {
+  const title = document.getElementById('docTitle').value.trim();
+  const manualUrl = document.getElementById('docUrl').value.trim();
+  if (!title) { showToast('Title is required', 'error'); return; }
+  if (!_selectedDocFile && !manualUrl) { showToast('Please attach a file or provide a URL', 'error'); return; }
+
+  const btn = document.getElementById('docUploadBtn');
+  const prog = document.getElementById('docUploadProgress');
+  const progBar = document.getElementById('docProgressBar');
+  const progText = document.getElementById('docProgressText');
+  let fileUrl = manualUrl;
+  let fileType = 'image';
+
+  if (_selectedDocFile) {
+    btn.disabled = true;
+    btn.textContent = 'Uploading...';
+    prog.style.display = 'block';
+    progBar.style.width = '20%';
+    progText.textContent = 'Authenticating with Google Drive...';
+
+    try {
+      const token = await gdriveAuth();
+      progBar.style.width = '40%';
+      progText.textContent = 'Preparing folder...';
+
+      const folderId = await gdriveGetOrCreateFolder(token);
+      progBar.style.width = '60%';
+      progText.textContent = 'Uploading file...';
+
+      const uploaded = await gdriveUploadFile(token, _selectedDocFile, folderId);
+      progBar.style.width = '80%';
+      progText.textContent = 'Setting permissions...';
+
+      await gdriveSetPublicRead(token, uploaded.id);
+      progBar.style.width = '100%';
+      progText.textContent = 'Done!';
+
+      fileUrl = uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`;
+      fileType = _selectedDocFile.type.includes('pdf') ? 'pdf' : 'image';
+    } catch (e) {
+      console.error('Google Drive upload error:', e);
+      showToast('Upload failed: ' + (e.message || e), 'error');
+      btn.disabled = false;
+      btn.textContent = 'Upload';
+      prog.style.display = 'none';
+      return;
+    }
+  }
+
+  if (manualUrl && !_selectedDocFile) {
+    fileType = manualUrl.toLowerCase().includes('.pdf') ? 'pdf' : 'image';
+  }
+
+  const data = {
+    title,
+    category: document.getElementById('docCategory').value,
+    summary: document.getElementById('docDesc').value,
+    fileUrl: fileUrl,
+    fileType: fileType,
+    date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+  };
+
+  notices.unshift(data);
+  if (typeof SunData !== 'undefined' && SunData.addNotice) {
+    await SunData.addNotice(data);
+  } else {
+    const stored = JSON.parse(localStorage.getItem('st_notices') || '[]');
+    stored.unshift(data);
+    localStorage.setItem('st_notices', JSON.stringify(stored));
+    supaSync('st_notices');
+  }
+
+  // Reset form
+  btn.disabled = false;
+  btn.textContent = 'Upload';
+  prog.style.display = 'none';
+  _selectedDocFile = null;
+  document.getElementById('docFileInput').value = '';
+  document.getElementById('docFileLabel').innerHTML = '<div style="font-size:2rem;margin-bottom:6px">&#128206;</div><div>Click to select file or drag & drop</div><div style="font-size:0.75rem;margin-top:4px">PDF, DOC, XLS, PPT, Images (max 10MB)</div>';
+  document.getElementById('docFileArea').style.borderColor = '';
+  document.getElementById('docTitle').value = '';
+  document.getElementById('docUrl').value = '';
+  document.getElementById('docDesc').value = '';
+
+  const s = document.getElementById('docSuccess');
+  s.textContent = 'Document uploaded to Google Drive!';
+  s.style.display = 'block';
+  setTimeout(() => s.style.display = 'none', 4000);
+  document.getElementById('docUploadForm').style.display = 'none';
+  loadDocuments();
+}
+
 // ===== DOCUMENTS =====
 async function loadDocuments() { const el = document.getElementById('documentsList'); if (!el) return; try { const catFilter = document.getElementById('docCategoryFilter')?.value || ''; const searchQuery = document.getElementById('docSearch')?.value?.toLowerCase() || ''; let docs = notices.filter(n => n.fileUrl); if (catFilter) docs = docs.filter(d => d.category === catFilter); if (searchQuery) docs = docs.filter(d => (d.title || '').toLowerCase().includes(searchQuery) || (d.summary || '').toLowerCase().includes(searchQuery)); if (docs.length === 0) { el.innerHTML = '<div class="kpi-empty" style="grid-column:1/-1">No documents found</div>'; return; } el.innerHTML = docs.map((d, i) => { const catColors = {'General':'#1a237e','Maintenance':'#e65100','Security':'#b71c1c','Meeting':'#1565c0','Financial':'#2e7d32','Event':'#4527a0'}; const color = catColors[d.category] || '#666'; const isPdf = d.fileType === 'pdf' || d.fileUrl.includes('.pdf'); return `<div class="card" style="cursor:pointer;border-top:3px solid ${color};margin:0" onclick="openN(${notices.indexOf(d)})"><div style="font-size:2rem;margin-bottom:8px">${isPdf ? '📄' : '🖼️'}</div><h4 style="font-size:0.92rem;margin-bottom:4px">${esc(d.title || 'Document')}</h4><div style="font-size:0.78rem;color:var(--text-light);margin-bottom:8px">${esc(d.summary || '').substring(0, 80)}${(d.summary || '').length > 80 ? '...' : ''}</div><div style="display:flex;gap:6px;align-items:center"><span class="badge" style="background:${color};font-size:0.65rem">${esc(d.category || 'General')}</span><span style="font-size:0.72rem;color:#999">${esc(d.date || '')}</span></div></div>`; }).join(''); } catch(e) { el.innerHTML = '<div class="kpi-empty" style="grid-column:1/-1">Error loading documents</div>'; } }
 async function saveDocument() { const title = document.getElementById('docTitle').value.trim(); const url = document.getElementById('docUrl').value.trim(); if (!title || !url) { showToast('Title and URL are required', 'error'); return; } const data = { title, category: document.getElementById('docCategory').value, summary: document.getElementById('docDesc').value, fileUrl: url, fileType: url.toLowerCase().includes('.pdf') ? 'pdf' : 'image', date: new Date().toLocaleDateString('en-IN', {day: '2-digit', month: 'short', year: 'numeric'}) }; notices.unshift(data); if (typeof SunData !== 'undefined' && SunData.addNotice) { await SunData.addNotice(data); } else { const stored = JSON.parse(localStorage.getItem('st_notices') || '[]'); stored.unshift(data); localStorage.setItem('st_notices', JSON.stringify(stored)); } var s = document.getElementById('docSuccess'); s.textContent = 'Document uploaded!'; s.style.display = 'block'; setTimeout(() => s.style.display = 'none', 3000); document.getElementById('docUploadForm').style.display = 'none'; loadDocuments(); }

@@ -11,6 +11,8 @@
 <link rel="stylesheet" href="css/bom.css?v=20260316c">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
 <script src="js/supabase-config.js?v=20260315"></script>
 <script src="js/audit.js?v=20260315"></script>
 <script src="js/auth.js?v=20260315"></script>
@@ -436,11 +438,26 @@
             <div class="form-group"><label>Title</label><input type="text" class="form-control" id="docTitle" placeholder="Document title"></div>
             <div class="form-group"><label>Category</label><select class="form-control" id="docCategory"><option>GBM Minutes</option><option>BOM Minutes</option><option>Financial Reports</option><option>Policies</option><option>Forms</option><option>Vendor Contracts</option><option>Legal</option><option>Other</option></select></div>
           </div>
-          <div class="form-group"><label>File URL</label><input type="url" class="form-control" id="docUrl" placeholder="https://..."></div>
+          <div class="form-group">
+            <label>Attach File (uploads to Google Drive)</label>
+            <div id="docFileArea" style="border:2px dashed var(--border);border-radius:var(--tile-radius);padding:20px;text-align:center;cursor:pointer;background:#fafafa;position:relative" onclick="document.getElementById('docFileInput').click()">
+              <input type="file" id="docFileInput" style="display:none" onchange="handleDocFileSelect(this)" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.txt,.csv">
+              <div id="docFileLabel" style="color:var(--text-light)">
+                <div style="font-size:2rem;margin-bottom:6px">&#128206;</div>
+                <div>Click to select file or drag & drop</div>
+                <div style="font-size:0.75rem;margin-top:4px">PDF, DOC, XLS, PPT, Images (max 10MB)</div>
+              </div>
+            </div>
+          </div>
+          <div class="form-group"><label>Or paste File URL</label><input type="url" class="form-control" id="docUrl" placeholder="https://... (optional if file attached)"></div>
           <div class="form-group"><label>Description</label><textarea class="form-control" id="docDesc" rows="2" placeholder="Brief description..."></textarea></div>
           <div class="action-bar">
-            <button class="btn btn-primary" onclick="saveDocument()">Upload</button>
+            <button class="btn btn-primary" id="docUploadBtn" onclick="saveDocumentWithDrive()">Upload</button>
             <button class="btn btn-danger btn-sm" onclick="document.getElementById('docUploadForm').style.display='none'">Cancel</button>
+          </div>
+          <div id="docUploadProgress" style="display:none;margin-top:10px">
+            <div style="background:#e0e0e0;border-radius:4px;height:6px;overflow:hidden"><div id="docProgressBar" style="background:var(--primary);height:100%;width:0%;transition:width 0.3s"></div></div>
+            <div id="docProgressText" style="font-size:0.78rem;color:var(--text-light);margin-top:4px">Uploading to Google Drive...</div>
           </div>
           <div class="auth-success" id="docSuccess" style="margin-top:10px"></div>
         </div>
@@ -624,7 +641,7 @@
 
 <!-- JS -->
 <script src="js/bom-sidebar.js?v=20260315"></script>
-<script src="js/bom-app.js?v=20260316e"></script>
+<script src="js/bom-app.js?v=20260317"></script>
 
 </body>
 </html>
