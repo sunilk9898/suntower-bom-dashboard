@@ -461,25 +461,22 @@ let _residentData = []; let _residentDataLoaded = false;
 
 function loadResidentData() {
   if (_residentDataLoaded) return Promise.resolve(_residentData);
-  return fetch('/data/residents.json').then(r => { if (!r.ok) throw new Error('No JSON'); return r.json(); }).then(d => { _residentData = d; _residentDataLoaded = true; console.log('Resident data loaded from JSON:', d.length, 'records'); return d; }).catch(() => {
-    // Try root path
-    return fetch('/data/residents.json').then(r => { if (!r.ok) throw new Error('No JSON'); return r.json(); }).then(d => { _residentData = d; _residentDataLoaded = true; return d; }).catch(() => {
-      if (typeof supa === 'undefined' || !supa) { console.warn('Supabase not available'); return []; }
-      console.log('residents.json not found, trying Supabase residents_directory...');
-      return supa.from('residents_directory').select('*').then(({data, error}) => {
-        if (!error && data && data.length > 0) {
-          const mapped = data.map(r => ({n: r.name||'', f: r.flat_full||'', t: r.tower||'', fn: r.flat_no||'', tp: r.resident_type||'Owner', st: r.status||'Active', oc: r.occupancy||'Self-occupied', mb: r.mobile||''}));
-          _residentData = mapped; _residentDataLoaded = true; return mapped;
-        }
-        return supa.from('profiles').select('*').then(({data: pData, error: pErr}) => {
-          if (pErr) { console.error('Supabase profiles error:', pErr); return []; }
-          const seenIds = new Set(); const mapped = [];
-          (pData || []).forEach(p => { if (seenIds.has(p.id)) return; seenIds.add(p.id); const email = (p.email||'').toLowerCase(); if (mapped.find(m => m._email === email)) return; const flat = p.flat_no || ''; const towerMatch = flat.match(/^(ST[A-D][12]?)/i); const tower = towerMatch ? towerMatch[1].toUpperCase() : ''; const fn = flat.replace(/^ST[A-D][12]?-?/i, ''); mapped.push({n: p.display_name||p.email||'', f: flat, t: tower, fn: fn, tp: p.type||'Owner', st: (p.status||'active') === 'active' ? 'Active' : 'Inactive', oc: p.occupancy||'Self-occupied', mb: p.mobile||'', _email: email}); });
-          _residentData = mapped; _residentDataLoaded = true; return mapped;
-        });
+  if (typeof supa === 'undefined' || !supa) { console.warn('Supabase not available'); return Promise.resolve([]); }
+  // Load from Supabase residents_directory (primary source of truth)
+  return SunData.getResidents().then(data => {
+    if (data && data.length > 0) {
+      const mapped = data.map(r => ({n: r.name||'', f: r.flat_full||'', t: r.tower||'', fn: r.flat_no||'', tp: r.resident_type||'Owner', st: r.status||'Active', oc: r.occupancy||'Self-occupied', mb: r.mobile||''}));
+      _residentData = mapped; _residentDataLoaded = true; return mapped;
+    }
+    // Fallback to profiles if residents_directory is empty
+    return SunData.getProfiles('resident').then(pData => {
+      const mapped = (pData || []).map(p => {
+        const flat = p.flat_no || ''; const towerMatch = flat.match(/^(ST[A-D][12]?)/i); const tower = towerMatch ? towerMatch[1].toUpperCase() : ''; const fn = flat.replace(/^ST[A-D][12]?-?/i, '');
+        return {n: p.display_name||p.email||'', f: flat, t: tower, fn: fn, tp: p.type||'Owner', st: (p.status||'active') === 'active' ? 'Active' : 'Inactive', oc: p.occupancy||'Self-occupied', mb: p.mobile||''};
       });
+      _residentData = mapped; _residentDataLoaded = true; return mapped;
     });
-  });
+  }).catch(e => { console.error('loadResidentData error:', e); return []; });
 }
 
 function residentAutocomplete(input) {
@@ -870,7 +867,7 @@ async function loadManageResidents() {
   const area = document.getElementById('mgrResidentsArea'); const stats = document.getElementById('mgrResidentsStats');
   area.innerHTML = '<p style="color:var(--text-light)">Loading residents...</p>'; _allManagedResidents = [];
   try { const sbProfiles = await SunData.getProfiles('resident'); const seenIds = new Set(); sbProfiles.forEach(p => { if (seenIds.has(p.id)) return; seenIds.add(p.id); const email = (p.email || '').toLowerCase(); if (_allManagedResidents.find(a => a.email && a.email.toLowerCase() === email)) return; _allManagedResidents.push({id: p.id, name: p.display_name || '', flat: p.flat_no || '', tower: p.flat_no ? (p.flat_no.match(/^(ST[A-D][12])/i) || [])[1] || '' : '', email: p.email || '', mobile: p.mobile || '', type: '', status: p.status || 'active', source: 'auth'}); }); } catch(e) { console.warn('loadManageResidents: Supabase error', e); }
-  try { if (!window._residentData || !window._residentData.length) { const resp = await fetch('/data/residents.json'); if (resp.ok) window._residentData = await resp.json(); } if (window._residentData) { window._residentData.forEach((r, i) => { const exists = _allManagedResidents.find(a => (a.email && r.mb && a.email.toLowerCase() === r.mb.toLowerCase()) || (a.name && r.n && a.name.toLowerCase() === r.n.toLowerCase() && a.flat === r.f)); if (!exists) { _allManagedResidents.push({id: 'dir_' + i, name: r.n || '', flat: r.f || '', tower: r.t || '', flatNo: r.fn || '', email: '', mobile: r.mb || '', type: r.tp || '', occupancy: r.oc || '', status: r.st || 'Active', source: 'directory'}); } }); } } catch(e) { console.warn('loadManageResidents: directory error', e); }
+  try { const dirResidents = await SunData.getResidents(); dirResidents.forEach(r => { const exists = _allManagedResidents.find(a => (a.email && r.email && a.email.toLowerCase() === r.email.toLowerCase()) || (a.name && r.name && a.name.toLowerCase() === r.name.toLowerCase() && a.flat === r.flat_full)); if (!exists) { _allManagedResidents.push({id: r.id || 'dir_' + Math.random().toString(36).substr(2,6), name: r.name || '', flat: r.flat_full || '', tower: r.tower || '', flatNo: r.flat_no || '', email: r.email || '', mobile: r.mobile || '', type: r.resident_type || '', occupancy: r.occupancy || '', status: r.status || 'Active', source: 'directory'}); } }); } catch(e) { console.warn('loadManageResidents: directory error', e); }
   const authCount = _allManagedResidents.filter(r => r.source === 'auth').length; const dirCount = _allManagedResidents.filter(r => r.source === 'directory').length; const activeCount = _allManagedResidents.filter(r => r.status === 'active' || r.status === 'Active').length;
   stats.innerHTML = `<div style="display:flex;gap:10px;flex-wrap:wrap"><div class="dir-stat-card"><div class="stat-num">${_allManagedResidents.length}</div><div class="stat-label">Total</div></div><div class="dir-stat-card"><div class="stat-num" style="color:#2e7d32">${authCount}</div><div class="stat-label">With Login</div></div><div class="dir-stat-card"><div class="stat-num" style="color:#1565c0">${dirCount}</div><div class="stat-label">Directory Only</div></div><div class="dir-stat-card"><div class="stat-num" style="color:#00695c">${activeCount}</div><div class="stat-label">Active</div></div></div>`;
   filterManagedResidents();
