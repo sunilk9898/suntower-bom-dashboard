@@ -69,9 +69,10 @@ const PERM_MAP = {
 // ===== UI LOCK/UNLOCK =====
 function lockBOMUI() {
   document.getElementById('bomContent').style.display = 'none';
-  document.getElementById('bomLocked').style.display = 'block';
+  document.getElementById('bomLocked').style.display = '';
   var sb = document.getElementById('dashSidebar'); if (sb) sb.style.display = 'none';
   var st = document.getElementById('sidebarToggle'); if (st) st.style.display = 'none';
+  var dm = document.getElementById('dashMain'); if (dm) dm.style.marginLeft = '0';
 }
 
 function unlockBOM() {
@@ -79,6 +80,7 @@ function unlockBOM() {
   document.getElementById('bomContent').style.display = 'block';
   var sb = document.getElementById('dashSidebar'); if (sb) sb.style.display = '';
   var st = document.getElementById('sidebarToggle'); if (st) st.style.display = '';
+  var dm = document.getElementById('dashMain'); if (dm) dm.style.marginLeft = '';
   loadMemDB(); buildElectionTable(); loadResidentData();
   showSection('kpi');
   // Init sidebar permissions
