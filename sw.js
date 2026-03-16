@@ -1,7 +1,7 @@
 // ============================================
 // SUN TOWER RWA — BOM Dashboard Service Worker
 // ============================================
-const CACHE_NAME = 'suntower-bom-v7';
+const CACHE_NAME = 'suntower-bom-v8';
 const SHELL_FILES = [
   '/',
   '/index.html',
@@ -46,6 +46,21 @@ self.addEventListener('fetch', event => {
           return response;
         })
         .catch(() => caches.match(event.request).then(cached => cached || caches.match('/index.html')))
+    );
+    return;
+  }
+
+  // Network-first for JS/CSS to avoid stale cache
+  const isCodeAsset = url.pathname.endsWith('.js') || url.pathname.endsWith('.css');
+  if (isCodeAsset) {
+    event.respondWith(
+      fetch(event.request).then(response => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => caches.match(event.request))
     );
     return;
   }
