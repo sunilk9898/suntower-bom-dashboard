@@ -1102,6 +1102,7 @@ let _selectedDocFile = null;
 let _gdriveTokenClient = null;
 let _gdriveAuthResolve = null;
 let _gdriveAuthReject = null;
+let _gdriveReady = false;
 
 function handleDocFileSelect(input) {
   const file = input.files[0];
@@ -1112,42 +1113,54 @@ function handleDocFileSelect(input) {
   const icon = file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : '📎';
   label.innerHTML = `<div style="font-size:2rem;margin-bottom:6px">${icon}</div><div style="font-weight:600;color:var(--text)">${file.name}</div><div style="font-size:0.75rem;color:var(--text-light);margin-top:2px">${(file.size / 1024).toFixed(1)} KB — Click to change</div>`;
   document.getElementById('docFileArea').style.borderColor = 'var(--primary)';
-  // Auto-fill title if empty
   const titleInput = document.getElementById('docTitle');
   if (!titleInput.value.trim()) { titleInput.value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '); }
 }
 
-function _initGdriveClient() {
-  if (_gdriveTokenClient) return;
-  _gdriveTokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: GDRIVE_CLIENT_ID,
-    scope: GDRIVE_SCOPES,
-    callback: (resp) => {
-      if (resp.error) {
-        console.error('GDrive auth error:', resp);
-        if (_gdriveAuthReject) _gdriveAuthReject(resp.error_description || resp.error);
-        return;
+// Two-step flow: Step 1 = user clicks "Connect Google Drive" (direct click → popup allowed)
+// Step 2 = after auth, upload proceeds automatically
+function connectGoogleDrive() {
+  if (_gdriveToken) { showToast('Already connected to Google Drive', 'success'); return; }
+  if (typeof google === 'undefined' || !google.accounts) {
+    showToast('Google API not loaded. Please refresh the page.', 'error');
+    return;
+  }
+  if (!_gdriveTokenClient) {
+    _gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GDRIVE_CLIENT_ID,
+      scope: GDRIVE_SCOPES,
+      callback: (resp) => {
+        if (resp.error) {
+          console.error('GDrive auth error:', resp);
+          showToast('Google auth failed: ' + (resp.error_description || resp.error), 'error');
+          return;
+        }
+        _gdriveToken = resp.access_token;
+        _gdriveReady = true;
+        console.log('GDrive token acquired successfully');
+        showToast('Connected to Google Drive!', 'success');
+        // Update UI to show connected state
+        const btn = document.getElementById('gdriveConnectBtn');
+        if (btn) { btn.textContent = '✓ Google Drive Connected'; btn.style.background = '#2e7d32'; btn.disabled = true; }
+        // If there's a pending upload, proceed
+        if (_pendingUpload) { _pendingUpload = false; saveDocumentWithDrive(); }
+      },
+      error_callback: (err) => {
+        console.error('GDrive popup error:', err);
+        showToast('Google auth cancelled or blocked. Allow popups for this site.', 'error');
       }
-      _gdriveToken = resp.access_token;
-      console.log('GDrive token acquired');
-      if (_gdriveAuthResolve) _gdriveAuthResolve(_gdriveToken);
-    },
-    error_callback: (err) => {
-      console.error('GDrive auth popup error:', err);
-      if (_gdriveAuthReject) _gdriveAuthReject(err.message || 'Auth popup closed');
-    }
-  });
+    });
+  }
+  // This runs directly from user click → popup won't be blocked
+  _gdriveTokenClient.requestAccessToken({ prompt: 'consent' });
 }
+
+let _pendingUpload = false;
 
 function gdriveAuth() {
   return new Promise((resolve, reject) => {
     if (_gdriveToken) { resolve(_gdriveToken); return; }
-    try {
-      _initGdriveClient();
-      _gdriveAuthResolve = resolve;
-      _gdriveAuthReject = reject;
-      _gdriveTokenClient.requestAccessToken({ prompt: '' });
-    } catch (e) { reject(e); }
+    reject('Not connected to Google Drive');
   });
 }
 
@@ -1208,14 +1221,22 @@ async function saveDocumentWithDrive() {
   let fileType = 'image';
 
   if (_selectedDocFile) {
+    // Check if Google Drive is connected first
+    if (!_gdriveToken) {
+      showToast('Please connect Google Drive first, then click Upload again.', 'error');
+      _pendingUpload = true;
+      connectGoogleDrive();
+      return;
+    }
+
     btn.disabled = true;
     btn.textContent = 'Uploading...';
     prog.style.display = 'block';
     progBar.style.width = '20%';
-    progText.textContent = 'Authenticating with Google Drive...';
+    progText.textContent = 'Preparing upload...';
 
     try {
-      const token = await gdriveAuth();
+      const token = _gdriveToken;
       progBar.style.width = '40%';
       progText.textContent = 'Preparing folder...';
 
