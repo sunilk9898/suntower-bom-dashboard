@@ -1388,7 +1388,7 @@ setTimeout(function() {
 if (SunAuth.isLoggedIn()) { initRealtime(); }
 
 // ===== AI ASSISTANT =====
-const AI_API_KEY = 'AIzaSyADG3dsvqesbu-CIve3fmk6arI_zkOXsHk';
+const AI_API_KEY = 'AIzaSyBlRo8kPyorRQYDmnXFaMs_ML6Tkyw-lDQ';
 const AI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + AI_API_KEY;
 let aiChatHistory = [];
 let aiInitialized = false;

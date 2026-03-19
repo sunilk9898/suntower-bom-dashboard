@@ -1,7 +1,7 @@
 // ============================================
 // SUN TOWER RWA — BOM Dashboard Service Worker
 // ============================================
-const CACHE_NAME = 'suntower-bom-v16';
+const CACHE_NAME = 'suntower-bom-v17';
 const SHELL_FILES = [
   '/',
   '/index.html',
