@@ -1389,10 +1389,17 @@ if (SunAuth.isLoggedIn()) { initRealtime(); }
 
 // ===== AI ASSISTANT =====
 // AI key stored in localStorage (set via Admin > AI Settings), never committed to repo
-function getAIKey() { return localStorage.getItem('st_ai_api_key') || ''; }
-const AI_API_URL = 'https://api.openai.com/v1/chat/completions';
+function getAIKey() {
+  var key = localStorage.getItem('st_ai_api_key') || '';
+  // Clear old OpenAI key if present (switched to Gemini)
+  if (key && key.startsWith('sk-')) { localStorage.removeItem('st_ai_api_key'); return ''; }
+  return key;
+}
+const AI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 let aiChatHistory = [];
 let aiInitialized = false;
+let aiLastRequestTime = 0;
+const AI_MIN_INTERVAL = 4500; // ~13 RPM to stay under 15 RPM limit
 
 function initAIChat() {
   if (aiInitialized) return;
@@ -1576,73 +1583,116 @@ function appendAIMessage(text, isUser) {
   container.scrollTop = container.scrollHeight;
 }
 
-async function sendAIMessage() {
+async function sendAIMessage(retryCount) {
+  retryCount = retryCount || 0;
   var input = document.getElementById('aiInput');
   var text = input.value.trim();
-  if (!text) return;
+  if (!text && retryCount === 0) return;
 
-  input.value = '';
-  appendAIMessage(text, true);
+  // On first call, capture text; on retry, use last history entry
+  if (retryCount === 0) {
+    input.value = '';
+    appendAIMessage(text, true);
+  } else {
+    text = aiChatHistory.length ? aiChatHistory[aiChatHistory.length - 1].pendingUser : text;
+  }
 
   // Show thinking
-  document.getElementById('aiThinking').classList.remove('hidden');
+  var thinkingEl = document.getElementById('aiThinking');
+  var thinkingText = document.getElementById('aiThinkingText');
+  thinkingEl.classList.remove('hidden');
+  if (thinkingText) thinkingText.textContent = retryCount > 0 ? '(retry ' + retryCount + '/3, waiting for rate limit...)' : '';
   document.getElementById('aiSendBtn').disabled = true;
   var msgContainer = document.getElementById('aiMessages');
   msgContainer.scrollTop = msgContainer.scrollHeight;
 
-  // Build conversation with context (OpenAI format)
-  var systemCtx = gatherBOMContext();
-  var messages = [{ role: 'system', content: systemCtx }];
-
-  // Add chat history
-  for (var i = 0; i < aiChatHistory.length; i++) {
-    messages.push({ role: 'user', content: aiChatHistory[i].user });
-    messages.push({ role: 'assistant', content: aiChatHistory[i].bot });
+  // Rate limiting: wait if needed
+  var now = Date.now();
+  var timeSinceLast = now - aiLastRequestTime;
+  if (timeSinceLast < AI_MIN_INTERVAL) {
+    await new Promise(function(resolve) { setTimeout(resolve, AI_MIN_INTERVAL - timeSinceLast); });
   }
-  messages.push({ role: 'user', content: text });
+
+  // Build Gemini format conversation
+  var systemCtx = gatherBOMContext();
+  var contents = [];
+
+  // Add chat history as conversation turns
+  for (var i = 0; i < aiChatHistory.length; i++) {
+    if (aiChatHistory[i].bot) { // only completed exchanges
+      contents.push({ role: 'user', parts: [{ text: aiChatHistory[i].user }] });
+      contents.push({ role: 'model', parts: [{ text: aiChatHistory[i].bot }] });
+    }
+  }
+  contents.push({ role: 'user', parts: [{ text: text }] });
 
   var apiKey = getAIKey();
   if (!apiKey) {
-    document.getElementById('aiThinking').classList.add('hidden');
-    var key = prompt('Enter your OpenAI API key (stored locally, never sent to our server):');
+    thinkingEl.classList.add('hidden');
+    var key = prompt('Enter your Google Gemini API key (stored locally, never sent to our server):');
     if (key && key.trim()) { localStorage.setItem('st_ai_api_key', key.trim()); apiKey = key.trim(); }
     else { appendAIMessage('AI API key required. Go to Admin section or enter when prompted.', false); document.getElementById('aiSendBtn').disabled = false; return; }
   }
 
+  // Store pending user message for retry
+  if (retryCount === 0) {
+    aiChatHistory.push({ user: text, bot: null, pendingUser: text });
+  }
+
   try {
-    var resp = await fetch(AI_API_URL, {
+    aiLastRequestTime = Date.now();
+    var resp = await fetch(AI_API_URL + '?key=' + apiKey, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + apiKey
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: messages,
-        max_tokens: 2000,
-        temperature: 0.7
+        system_instruction: { parts: [{ text: systemCtx }] },
+        contents: contents,
+        generationConfig: {
+          maxOutputTokens: 2000,
+          temperature: 0.7
+        }
       })
     });
 
     if (!resp.ok) {
       var errData = await resp.json().catch(function() { return {}; });
-      throw new Error((errData.error && errData.error.message) || 'API error: ' + resp.status);
+      var errMsg = (errData.error && errData.error.message) || 'API error: ' + resp.status;
+
+      // Auto-retry on 429 (rate limit) up to 3 times
+      if (resp.status === 429 && retryCount < 3) {
+        var waitTime = Math.min(5000 * (retryCount + 1), 15000);
+        if (thinkingText) thinkingText.textContent = '(rate limited, retrying in ' + Math.round(waitTime/1000) + 's...)';
+        await new Promise(function(resolve) { setTimeout(resolve, waitTime); });
+        input.value = ''; // clear in case retry
+        return sendAIMessage(retryCount + 1);
+      }
+      throw new Error(errMsg);
     }
 
     var data = await resp.json();
     var reply = 'Sorry, I could not generate a response. Please try again.';
 
-    if (data.choices && data.choices[0] && data.choices[0].message) {
-      reply = data.choices[0].message.content;
+    if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
+      reply = data.candidates[0].content.parts.map(function(p) { return p.text || ''; }).join('');
     }
 
-    aiChatHistory.push({ user: text, bot: reply });
+    // Update the pending history entry
+    if (aiChatHistory.length > 0) {
+      aiChatHistory[aiChatHistory.length - 1].bot = reply;
+      delete aiChatHistory[aiChatHistory.length - 1].pendingUser;
+    }
     if (aiChatHistory.length > 10) aiChatHistory.shift();
 
-    document.getElementById('aiThinking').classList.add('hidden');
+    thinkingEl.classList.add('hidden');
+    if (thinkingText) thinkingText.textContent = '';
     appendAIMessage(reply, false);
   } catch(err) {
-    document.getElementById('aiThinking').classList.add('hidden');
+    // Remove pending entry on failure
+    if (aiChatHistory.length > 0 && aiChatHistory[aiChatHistory.length - 1].bot === null) {
+      aiChatHistory.pop();
+    }
+    thinkingEl.classList.add('hidden');
+    if (thinkingText) thinkingText.textContent = '';
     appendAIMessage('Error: ' + err.message, false);
   }
 
