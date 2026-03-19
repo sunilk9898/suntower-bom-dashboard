@@ -1388,8 +1388,9 @@ setTimeout(function() {
 if (SunAuth.isLoggedIn()) { initRealtime(); }
 
 // ===== AI ASSISTANT =====
-const AI_API_KEY = 'AIzaSyBlRo8kPyorRQYDmnXFaMs_ML6Tkyw-lDQ';
-const AI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + AI_API_KEY;
+// AI key stored in localStorage (set via Admin > AI Settings), never committed to repo
+function getAIKey() { return localStorage.getItem('st_ai_api_key') || ''; }
+const AI_API_URL = 'https://api.openai.com/v1/chat/completions';
 let aiChatHistory = [];
 let aiInitialized = false;
 
@@ -1589,49 +1590,60 @@ async function sendAIMessage() {
   var msgContainer = document.getElementById('aiMessages');
   msgContainer.scrollTop = msgContainer.scrollHeight;
 
-  // Build conversation with context
+  // Build conversation with context (OpenAI format)
   var systemCtx = gatherBOMContext();
-  var contents = [];
+  var messages = [{ role: 'system', content: systemCtx }];
 
-  // First message includes system context
-  if (aiChatHistory.length === 0) {
-    contents.push({ role: 'user', parts: [{ text: systemCtx + '\n\nUser question: ' + text }] });
-  } else {
-    // Include history
-    contents.push({ role: 'user', parts: [{ text: systemCtx + '\n\nUser question: ' + aiChatHistory[0].user }] });
-    contents.push({ role: 'model', parts: [{ text: aiChatHistory[0].bot }] });
-    for (var i = 1; i < aiChatHistory.length; i++) {
-      contents.push({ role: 'user', parts: [{ text: aiChatHistory[i].user }] });
-      contents.push({ role: 'model', parts: [{ text: aiChatHistory[i].bot }] });
-    }
-    contents.push({ role: 'user', parts: [{ text: text }] });
+  // Add chat history
+  for (var i = 0; i < aiChatHistory.length; i++) {
+    messages.push({ role: 'user', content: aiChatHistory[i].user });
+    messages.push({ role: 'assistant', content: aiChatHistory[i].bot });
+  }
+  messages.push({ role: 'user', content: text });
+
+  var apiKey = getAIKey();
+  if (!apiKey) {
+    document.getElementById('aiThinking').classList.add('hidden');
+    var key = prompt('Enter your OpenAI API key (stored locally, never sent to our server):');
+    if (key && key.trim()) { localStorage.setItem('st_ai_api_key', key.trim()); apiKey = key.trim(); }
+    else { appendAIMessage('AI API key required. Go to Admin section or enter when prompted.', false); document.getElementById('aiSendBtn').disabled = false; return; }
   }
 
   try {
     var resp = await fetch(AI_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: contents })
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + apiKey
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: messages,
+        max_tokens: 2000,
+        temperature: 0.7
+      })
     });
 
-    if (!resp.ok) throw new Error('API error: ' + resp.status);
+    if (!resp.ok) {
+      var errData = await resp.json().catch(function() { return {}; });
+      throw new Error((errData.error && errData.error.message) || 'API error: ' + resp.status);
+    }
 
     var data = await resp.json();
     var reply = 'Sorry, I could not generate a response. Please try again.';
 
-    if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
-      reply = data.candidates[0].content.parts.map(function(p) { return p.text || ''; }).join('');
+    if (data.choices && data.choices[0] && data.choices[0].message) {
+      reply = data.choices[0].message.content;
     }
 
     aiChatHistory.push({ user: text, bot: reply });
-    // Keep history manageable (last 10 exchanges)
     if (aiChatHistory.length > 10) aiChatHistory.shift();
 
     document.getElementById('aiThinking').classList.add('hidden');
     appendAIMessage(reply, false);
   } catch(err) {
     document.getElementById('aiThinking').classList.add('hidden');
-    appendAIMessage('Error: Unable to get a response. Please check your connection and try again. (' + err.message + ')', false);
+    appendAIMessage('Error: ' + err.message, false);
   }
 
   document.getElementById('aiSendBtn').disabled = false;
