@@ -1099,6 +1099,9 @@ const GDRIVE_FOLDER_NAME = 'BOM Uploaded Documents';
 let _gdriveToken = null;
 let _gdriveFolderId = null;
 let _selectedDocFile = null;
+let _gdriveTokenClient = null;
+let _gdriveAuthResolve = null;
+let _gdriveAuthReject = null;
 
 function handleDocFileSelect(input) {
   const file = input.files[0];
@@ -1114,20 +1117,36 @@ function handleDocFileSelect(input) {
   if (!titleInput.value.trim()) { titleInput.value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '); }
 }
 
+function _initGdriveClient() {
+  if (_gdriveTokenClient) return;
+  _gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GDRIVE_CLIENT_ID,
+    scope: GDRIVE_SCOPES,
+    callback: (resp) => {
+      if (resp.error) {
+        console.error('GDrive auth error:', resp);
+        if (_gdriveAuthReject) _gdriveAuthReject(resp.error_description || resp.error);
+        return;
+      }
+      _gdriveToken = resp.access_token;
+      console.log('GDrive token acquired');
+      if (_gdriveAuthResolve) _gdriveAuthResolve(_gdriveToken);
+    },
+    error_callback: (err) => {
+      console.error('GDrive auth popup error:', err);
+      if (_gdriveAuthReject) _gdriveAuthReject(err.message || 'Auth popup closed');
+    }
+  });
+}
+
 function gdriveAuth() {
   return new Promise((resolve, reject) => {
     if (_gdriveToken) { resolve(_gdriveToken); return; }
     try {
-      const client = google.accounts.oauth2.initTokenClient({
-        client_id: GDRIVE_CLIENT_ID,
-        scope: GDRIVE_SCOPES,
-        callback: (resp) => {
-          if (resp.error) { reject(resp.error); return; }
-          _gdriveToken = resp.access_token;
-          resolve(_gdriveToken);
-        }
-      });
-      client.requestAccessToken();
+      _initGdriveClient();
+      _gdriveAuthResolve = resolve;
+      _gdriveAuthReject = reject;
+      _gdriveTokenClient.requestAccessToken({ prompt: '' });
     } catch (e) { reject(e); }
   });
 }
