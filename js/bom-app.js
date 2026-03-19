@@ -118,6 +118,7 @@ function showSection(s) {
   if (s === 'polls_mgmt') loadPollsManage();
   if (s === 'resolutions') loadResolutionsList();
   if (s === 'documents') loadDocuments();
+  if (s === 'ai_assistant') initAIChat();
   if (s === 'admin' && isAdmin) { loadRegRequests(); loadApprovedResidents(); loadManageResidents(); loadAdminMsgs(); buildAccountList(); }
   window.scrollTo(0, 0);
 }
@@ -1385,5 +1386,261 @@ setTimeout(function() {
 
 // Start realtime when auth ready
 if (SunAuth.isLoggedIn()) { initRealtime(); }
+
+// ===== AI ASSISTANT =====
+const AI_API_KEY = 'AIzaSyADG3dsvqesbu-CIve3fmk6arI_zkOXsHk';
+const AI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + AI_API_KEY;
+let aiChatHistory = [];
+let aiInitialized = false;
+
+function initAIChat() {
+  if (aiInitialized) return;
+  aiInitialized = true;
+  document.getElementById('aiInput').focus();
+}
+
+function gatherBOMContext() {
+  let ctx = 'You are an AI assistant for Sun Tower RWA (Residential Welfare Association) Board of Management Dashboard. ' +
+    'Sun Tower is a residential society in Shipra Suncity, Indirapuram, Ghaziabad, UP, India with 4 towers (STA, STB, STC, STD) and around 500+ flats. ' +
+    'Answer questions based on the following society data. Be helpful, concise and accurate.\n\n';
+
+  // Projects
+  try {
+    const p = JSON.parse(localStorage.getItem('st_projects') || '[]');
+    if (p.length) {
+      ctx += '## PROJECTS (' + p.length + '):\n';
+      p.forEach(function(pr) {
+        ctx += '- ' + pr.name + ' | Status: ' + (pr.status||'N/A') + ' | Progress: ' + (pr.progress||0) + '% | Timeline: ' + (pr.timeline||'N/A') + ' | Budget: ' + (pr.budget||'TBD') + ' | Description: ' + (pr.description||'') + '\n';
+        if (pr.updates && pr.updates.length) {
+          pr.updates.forEach(function(u) { ctx += '  Update (' + (u.date||'') + '): ' + (u.text||'') + '\n'; });
+        }
+        if (pr.expenses && pr.expenses.length) {
+          ctx += '  Expenses: ' + pr.expenses.map(function(e) { return e.desc + ' Rs.' + e.amount; }).join(', ') + '\n';
+        }
+      });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Committee definitions
+  try {
+    const cd = JSON.parse(localStorage.getItem('st_committee_defs') || '[]');
+    if (cd.length) {
+      ctx += '## COMMITTEES (' + cd.length + '):\n';
+      cd.forEach(function(c) { ctx += '- ' + (c.name||c.cn||'') + ' (Code: ' + (c.id||c.c||'') + '): ' + (c.description||c.desc||'') + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Committee members
+  try {
+    const cm = JSON.parse(localStorage.getItem('st_committee_members') || '[]');
+    if (cm.length) {
+      ctx += '## BOM MEMBERS (' + cm.length + '):\n';
+      cm.forEach(function(m) { ctx += '- ' + (m.name||'') + ' | Flat: ' + (m.flat||'') + ' | Position: ' + (m.position||m.pos||'') + ' | Phone: ' + (m.phone||'') + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Notices
+  try {
+    const n = JSON.parse(localStorage.getItem('st_notices') || '[]');
+    if (n.length) {
+      ctx += '## NOTICES/DOCUMENTS (' + n.length + '):\n';
+      n.forEach(function(nc) { ctx += '- ' + (nc.title||'') + ' | Category: ' + (nc.category||'') + ' | Date: ' + (nc.date||'') + ' | Summary: ' + (nc.summary||'').substring(0,200) + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Complaints
+  try {
+    const cmp = JSON.parse(localStorage.getItem('st_complaints') || '[]');
+    if (cmp.length) {
+      ctx += '## COMPLAINTS (' + cmp.length + '):\n';
+      cmp.forEach(function(c) { ctx += '- ' + (c.title||c.subject||'') + ' | Status: ' + (c.status||'') + ' | Category: ' + (c.category||'') + ' | Date: ' + (c.date||'') + ' | Description: ' + (c.description||c.desc||'').substring(0,200) + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Financial data
+  try {
+    const fin = JSON.parse(localStorage.getItem('st_financials') || '{}');
+    if (fin && Object.keys(fin).length) {
+      ctx += '## FINANCIALS:\n';
+      if (fin.fundBalance) ctx += '- Fund Balance: Rs. ' + fin.fundBalance + '\n';
+      if (fin.monthlyCollection) ctx += '- Monthly Collection: Rs. ' + fin.monthlyCollection + '\n';
+      if (fin.monthlyExpenses) ctx += '- Monthly Expenses: Rs. ' + fin.monthlyExpenses + '\n';
+      if (fin.pendingDues) ctx += '- Pending Dues: Rs. ' + fin.pendingDues + '\n';
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Meetings
+  try {
+    const mt = JSON.parse(localStorage.getItem('st_meetings') || '[]');
+    if (mt.length) {
+      ctx += '## MEETINGS (' + mt.length + '):\n';
+      mt.forEach(function(m) { ctx += '- ' + (m.title||'') + ' | Date: ' + (m.date||'') + ' | Type: ' + (m.type||'') + ' | Status: ' + (m.status||'') + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Resolutions
+  try {
+    const res = JSON.parse(localStorage.getItem('st_resolutions') || '[]');
+    if (res.length) {
+      ctx += '## RESOLUTIONS (' + res.length + '):\n';
+      res.forEach(function(r) { ctx += '- ' + (r.title||'') + ' | Status: ' + (r.status||'') + ' | Date: ' + (r.date||'') + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Events
+  try {
+    const ev = JSON.parse(localStorage.getItem('st_events') || '[]');
+    if (ev.length) {
+      ctx += '## EVENTS (' + ev.length + '):\n';
+      ev.forEach(function(e) { ctx += '- ' + (e.title||'') + ' | Date: ' + (e.date||'') + ' | Status: ' + (e.status||'') + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Static tasks data
+  if (TASKS && TASKS.length) {
+    ctx += '## BOM TASKS/RESPONSIBILITIES (' + TASKS.length + '):\n';
+    TASKS.forEach(function(t) { ctx += '- ' + t.t + ' | Committee: ' + t.cn + ' | Frequency: ' + t.f + ' | Assigned to: ' + t.dp + '\n'; });
+    ctx += '\n';
+  }
+
+  // Assignments
+  try {
+    const asgn = JSON.parse(localStorage.getItem('st_assignments') || '{}');
+    if (Object.keys(asgn).length) {
+      ctx += '## TASK ASSIGNMENTS:\n';
+      Object.keys(asgn).forEach(function(k) { ctx += '- Task ' + k + ': Assigned to ' + asgn[k] + '\n'; });
+      ctx += '\n';
+    }
+  } catch(e) {}
+
+  // Current user
+  if (currentUser) {
+    ctx += '## CURRENT USER: ' + currentUser.email + (isAdmin ? ' (Admin)' : ' (BOM Member)') + '\n\n';
+  }
+
+  ctx += 'Today is ' + new Date().toLocaleDateString('en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'}) + '.\n';
+  ctx += 'Format responses with markdown: use **bold**, bullet points, and headers where appropriate. Keep responses focused and relevant to the BOM dashboard data.';
+
+  return ctx;
+}
+
+function formatAIResponse(text) {
+  // Convert markdown-like formatting to HTML
+  var html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // Headers
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^# (.+)$/gm, '<h3>$1</h3>')
+    // Bold and italic
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Inline code
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    // Line breaks
+    .replace(/\n/g, '<br>');
+
+  // Simple list conversion
+  html = html.replace(/((?:<br>)?(?:\* |- |\d+\. ).+(?:<br>(?:\* |- |\d+\. ).+)*)/g, function(match) {
+    var items = match.split('<br>').filter(function(l) { return l.trim(); });
+    var isOrdered = /^\d+\./.test(items[0].trim());
+    var tag = isOrdered ? 'ol' : 'ul';
+    var lis = items.map(function(item) {
+      return '<li>' + item.replace(/^(\* |- |\d+\. )/, '').trim() + '</li>';
+    }).join('');
+    return '<' + tag + '>' + lis + '</' + tag + '>';
+  });
+
+  return html;
+}
+
+function appendAIMessage(text, isUser) {
+  var container = document.getElementById('aiMessages');
+  var div = document.createElement('div');
+  div.className = 'ai-msg ' + (isUser ? 'ai-msg-user' : 'ai-msg-bot');
+  div.innerHTML =
+    '<div class="ai-msg-avatar">' + (isUser ? '&#128100;' : '&#129302;') + '</div>' +
+    '<div class="ai-msg-bubble">' + (isUser ? text.replace(/</g,'&lt;').replace(/>/g,'&gt;') : formatAIResponse(text)) + '</div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+async function sendAIMessage() {
+  var input = document.getElementById('aiInput');
+  var text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  appendAIMessage(text, true);
+
+  // Show thinking
+  document.getElementById('aiThinking').classList.remove('hidden');
+  document.getElementById('aiSendBtn').disabled = true;
+  var msgContainer = document.getElementById('aiMessages');
+  msgContainer.scrollTop = msgContainer.scrollHeight;
+
+  // Build conversation with context
+  var systemCtx = gatherBOMContext();
+  var contents = [];
+
+  // First message includes system context
+  if (aiChatHistory.length === 0) {
+    contents.push({ role: 'user', parts: [{ text: systemCtx + '\n\nUser question: ' + text }] });
+  } else {
+    // Include history
+    contents.push({ role: 'user', parts: [{ text: systemCtx + '\n\nUser question: ' + aiChatHistory[0].user }] });
+    contents.push({ role: 'model', parts: [{ text: aiChatHistory[0].bot }] });
+    for (var i = 1; i < aiChatHistory.length; i++) {
+      contents.push({ role: 'user', parts: [{ text: aiChatHistory[i].user }] });
+      contents.push({ role: 'model', parts: [{ text: aiChatHistory[i].bot }] });
+    }
+    contents.push({ role: 'user', parts: [{ text: text }] });
+  }
+
+  try {
+    var resp = await fetch(AI_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: contents })
+    });
+
+    if (!resp.ok) throw new Error('API error: ' + resp.status);
+
+    var data = await resp.json();
+    var reply = 'Sorry, I could not generate a response. Please try again.';
+
+    if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
+      reply = data.candidates[0].content.parts.map(function(p) { return p.text || ''; }).join('');
+    }
+
+    aiChatHistory.push({ user: text, bot: reply });
+    // Keep history manageable (last 10 exchanges)
+    if (aiChatHistory.length > 10) aiChatHistory.shift();
+
+    document.getElementById('aiThinking').classList.add('hidden');
+    appendAIMessage(reply, false);
+  } catch(err) {
+    document.getElementById('aiThinking').classList.add('hidden');
+    appendAIMessage('Error: Unable to get a response. Please check your connection and try again. (' + err.message + ')', false);
+  }
+
+  document.getElementById('aiSendBtn').disabled = false;
+  document.getElementById('aiInput').focus();
+}
+
+function aiQuickAction(prompt) {
+  document.getElementById('aiInput').value = prompt;
+  sendAIMessage();
+}
 
 console.log('[BOM] Sun Tower BOM Dashboard initialized');

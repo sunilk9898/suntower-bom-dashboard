@@ -8,7 +8,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<link rel="stylesheet" href="css/bom.css?v=20260316c">
+<link rel="stylesheet" href="css/bom.css?v=20260319d">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -191,6 +191,14 @@
       <a class="sidebar-item standalone" data-section="directory" data-perm="isBOM" href="#">
         <span class="item-icon">&#128209;</span>
         <span class="item-label">Resident Directory</span>
+      </a>
+    </div>
+
+    <!-- AI Assistant — standalone -->
+    <div class="sidebar-section">
+      <a class="sidebar-item standalone" data-section="ai_assistant" data-perm="isBOM" href="#">
+        <span class="item-icon">&#129302;</span>
+        <span class="item-label">AI Assistant</span>
       </a>
     </div>
 
@@ -620,6 +628,38 @@
         </div>
       </div>
 
+      <!-- AI Assistant -->
+      <div class="bom-sec" id="bs_ai_assistant" data-section="ai_assistant">
+        <h2 class="page-title">&#129302; AI Assistant</h2>
+        <p class="page-subtitle">Ask questions about society data, projects, financials, complaints and more</p>
+        <div class="ai-chat-container">
+          <div class="ai-quick-actions">
+            <button class="ai-quick-btn" onclick="aiQuickAction('Give me a summary of all active projects with their current progress and timeline')">Summarize all projects</button>
+            <button class="ai-quick-btn" onclick="aiQuickAction('Give me an overview of all committees, their members and responsibilities')">Committee overview</button>
+            <button class="ai-quick-btn" onclick="aiQuickAction('List all pending and open complaints with details')">Pending complaints</button>
+            <button class="ai-quick-btn" onclick="aiQuickAction('Give me a financial summary including fund balance, collections and expenses')">Financial summary</button>
+          </div>
+          <div class="ai-messages" id="aiMessages">
+            <div class="ai-msg ai-msg-bot">
+              <div class="ai-msg-avatar">&#129302;</div>
+              <div class="ai-msg-bubble">Hello! I'm your BOM Dashboard AI Assistant. I can help you with information about projects, committees, complaints, financials, meetings, residents, and more. Ask me anything!</div>
+            </div>
+          </div>
+          <div class="ai-thinking hidden" id="aiThinking">
+            <div class="ai-msg ai-msg-bot">
+              <div class="ai-msg-avatar">&#129302;</div>
+              <div class="ai-msg-bubble ai-thinking-bubble">
+                <span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span>
+              </div>
+            </div>
+          </div>
+          <div class="ai-input-bar">
+            <input type="text" class="ai-input" id="aiInput" placeholder="Ask about projects, committees, complaints, financials..." onkeydown="if(event.key==='Enter')sendAIMessage()">
+            <button class="ai-send-btn" id="aiSendBtn" onclick="sendAIMessage()">&#10148;</button>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /bomContent -->
   </main>
 
@@ -645,7 +685,7 @@
 
 <!-- JS -->
 <script src="js/bom-sidebar.js?v=20260315"></script>
-<script src="js/bom-app.js?v=20260319c"></script>
+<script src="js/bom-app.js?v=20260319d"></script>
 
 </body>
 </html>
