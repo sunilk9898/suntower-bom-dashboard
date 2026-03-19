@@ -1,7 +1,7 @@
 // ============================================
 // SUN TOWER RWA — BOM Dashboard Service Worker
 // ============================================
-const CACHE_NAME = 'suntower-bom-v10';
+const CACHE_NAME = 'suntower-bom-v11';
 const SHELL_FILES = [
   '/',
   '/index.html',
@@ -36,6 +36,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET') return;
   if (url.hostname.includes('supabase.co') || url.hostname.includes('supabase.in')) return;
+  if (url.hostname.includes('google.com') || url.hostname.includes('googleapis.com') || url.hostname.includes('gstatic.com')) return;
 
   if (event.request.mode === 'navigate') {
     event.respondWith(
