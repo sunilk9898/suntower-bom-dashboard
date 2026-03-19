@@ -1388,22 +1388,53 @@ setTimeout(function() {
 if (SunAuth.isLoggedIn()) { initRealtime(); }
 
 // ===== AI ASSISTANT =====
-// AI key stored in localStorage (set via Admin > AI Settings), never committed to repo
-function getAIKey() {
-  var key = localStorage.getItem('st_ai_api_key') || '';
-  // Clear old OpenAI key if present (switched to Gemini)
-  if (key && key.startsWith('sk-')) { localStorage.removeItem('st_ai_api_key'); return ''; }
-  return key;
-}
+// AI key: auto-fetched from Supabase kv_store after login, cached in memory
+let _aiKeyCache = '';
 const AI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 let aiChatHistory = [];
 let aiInitialized = false;
 let aiLastRequestTime = 0;
 const AI_MIN_INTERVAL = 4500; // ~13 RPM to stay under 15 RPM limit
 
-function initAIChat() {
-  if (aiInitialized) return;
+async function fetchAIKey() {
+  // 1. Check memory cache
+  if (_aiKeyCache) return _aiKeyCache;
+  // 2. Check localStorage cache
+  var cached = localStorage.getItem('st_ai_api_key') || '';
+  if (cached && !cached.startsWith('sk-')) { _aiKeyCache = cached; return cached; }
+  // 3. Fetch from Supabase kv_store
+  try {
+    var resp = await supa.from('kv_store').select('value').eq('key', 'gemini_api_key').single();
+    if (resp.data && resp.data.value) {
+      var key = typeof resp.data.value === 'string' ? resp.data.value : resp.data.value.key || resp.data.value;
+      if (key) { _aiKeyCache = key; localStorage.setItem('st_ai_api_key', key); return key; }
+    }
+  } catch(e) { console.warn('[AI] Could not fetch API key from Supabase:', e); }
+  return '';
+}
+
+// Admin function: save Gemini API key to Supabase (one-time setup)
+async function saveAIKeyToSupabase(key) {
+  if (!key) return;
+  try {
+    await supa.from('kv_store').upsert({ key: 'gemini_api_key', value: key, updated_at: new Date().toISOString() });
+    _aiKeyCache = key;
+    localStorage.setItem('st_ai_api_key', key);
+    console.log('[AI] API key saved to Supabase successfully');
+    return true;
+  } catch(e) { console.error('[AI] Failed to save API key:', e); return false; }
+}
+
+function getAIKey() { return _aiKeyCache || localStorage.getItem('st_ai_api_key') || ''; }
+
+async function initAIChat() {
+  if (aiInitialized) { document.getElementById('aiInput').focus(); return; }
   aiInitialized = true;
+  // Pre-fetch AI key from Supabase
+  var key = await fetchAIKey();
+  if (!key) {
+    console.log('[AI] No key found in Supabase, will prompt on first message');
+  }
   document.getElementById('aiInput').focus();
 }
 
@@ -1626,12 +1657,18 @@ async function sendAIMessage(retryCount) {
   }
   contents.push({ role: 'user', parts: [{ text: text }] });
 
-  var apiKey = getAIKey();
+  var apiKey = await fetchAIKey();
   if (!apiKey) {
     thinkingEl.classList.add('hidden');
-    var key = prompt('Enter your Google Gemini API key (stored locally, never sent to our server):');
-    if (key && key.trim()) { localStorage.setItem('st_ai_api_key', key.trim()); apiKey = key.trim(); }
-    else { appendAIMessage('AI API key required. Go to Admin section or enter when prompted.', false); document.getElementById('aiSendBtn').disabled = false; return; }
+    var key = prompt('Enter your Google Gemini API key (will be saved to cloud for all users):');
+    if (key && key.trim()) {
+      await saveAIKeyToSupabase(key.trim());
+      apiKey = key.trim();
+    } else {
+      appendAIMessage('AI API key required. Contact admin to configure.', false);
+      document.getElementById('aiSendBtn').disabled = false;
+      return;
+    }
   }
 
   // Store pending user message for retry
